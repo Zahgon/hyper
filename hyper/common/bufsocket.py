@@ -1,28 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
-hyper/http20/bufsocket.py
-~~~~~~~~~~~~~~~~~~~~~~~~~
-
-This file implements a buffered socket wrapper.
-
-The purpose of this is to avoid the overhead of unnecessary syscalls while
-allowing small reads from the network. This represents a potentially massive
-performance optimisation at the cost of burning some memory in the userspace
-process.
-"""
 import select
 from .exceptions import ConnectionResetError, LineTooLongError
 
 
 class BufferedSocket(object):
-    """
-    A buffered socket wrapper.
-
-    The purpose of this is to avoid the overhead of unnecessary syscalls while
-    allowing small reads from the network. This represents a potentially
-    massive performance optimisation at the cost of burning some memory in the
-    userspace process.
-    """
     def __init__(self, sck, buffer_size=1000):
         """
         Create the buffered socket.
@@ -33,53 +14,32 @@ class BufferedSocket(object):
             Small values of ``buffer_size`` increase the overhead of buffer
             management: large values cause more memory to be used.
         """
-        # The wrapped socket.
         self._sck = sck
 
-        # The buffer we're using.
         self._backing_buffer = bytearray(buffer_size)
         self._buffer_view = memoryview(self._backing_buffer)
 
-        # The size of the buffer.
         self._buffer_size = buffer_size
 
-        # The start index in the memory view.
         self._index = 0
 
-        # The number of bytes in the buffer.
         self._bytes_in_buffer = 0
 
     @property
     def _remaining_capacity(self):
-        """
-        The maximum number of bytes the buffer could still contain.
-        """
-        return self._buffer_size - self._index
+        pass
 
     @property
     def _buffer_end(self):
-        """
-        The index of the first free byte in the buffer.
-        """
-        return self._index + self._bytes_in_buffer
+        pass
 
     @property
     def can_read(self):
-        """
-        Whether or not there is more data to read from the socket.
-        """
-        read = select.select([self._sck], [], [], 0)[0]
-        if read:
-            return True
-
-        return False
+        pass
 
     @property
     def buffer(self):
-        """
-        Get access to the buffer itself.
-        """
-        return self._buffer_view[self._index:self._buffer_end]
+        pass
 
     def advance_buffer(self, count):
         """
@@ -116,23 +76,12 @@ class BufferedSocket(object):
             bytes. The data *must* be copied out by the caller before the next
             call to this function.
         """
-        # In this implementation you can never read more than the number of
-        # bytes in the buffer.
         if amt > self._buffer_size:
             amt = self._buffer_size
 
-        # If the amount of data we've been asked to read is less than the
-        # remaining space in the buffer, we need to clear out the buffer and
-        # start over.
         if amt > self._remaining_capacity:
             self.new_buffer()
 
-        # If there's still some room in the buffer, opportunistically attempt
-        # to read into it.
-        # If we don't actually _need_ the data (i.e. there's enough in the
-        # buffer to satisfy the request), use select to work out if the read
-        # attempt will block. If it will, don't bother reading. If we need the
-        # data, always do the read.
         if self._bytes_in_buffer >= amt:
             should_read = select.select([self._sck], [], [], 0)[0]
         else:
@@ -141,13 +90,10 @@ class BufferedSocket(object):
         if should_read:
             count = self._sck.recv_into(self._buffer_view[self._buffer_end:])
 
-            # The socket just got closed. We should throw an exception if we
-            # were asked for more data than we can return.
             if not count and amt > self._bytes_in_buffer:
                 raise ConnectionResetError()
             self._bytes_in_buffer += count
 
-        # Read out the bytes and update the index.
         amt = min(amt, self._bytes_in_buffer)
         data = self._buffer_view[self._index:self._index+amt]
 
@@ -184,8 +130,6 @@ class BufferedSocket(object):
             bytes. The data *must* be copied out by the caller before the next
             call to this function.
         """
-        # First, check if there's anything in the buffer. This is one of those
-        # rare circumstances where this will work correctly on all platforms.
         index = self._backing_buffer.find(
             b'\n',
             self._index,
@@ -199,11 +143,6 @@ class BufferedSocket(object):
             self._bytes_in_buffer -= length
             return data
 
-        # In this case, we didn't find a newline in the buffer. To fix that,
-        # read some data into the buffer. To do our best to satisfy the read,
-        # we should shunt the data down in the buffer so that it's right at
-        # the start. We don't bother if we're already at the start of the
-        # buffer.
         if self._index != 0:
             self.new_buffer()
 
@@ -212,7 +151,6 @@ class BufferedSocket(object):
             if not count:
                 raise ConnectionResetError()
 
-            # We have some more data. Again, look for a newline in that gap.
             first_new_byte = self._buffer_end
             self._bytes_in_buffer += count
             index = self._backing_buffer.find(
@@ -222,9 +160,6 @@ class BufferedSocket(object):
             )
 
             if index != -1:
-                # The length of the buffer is the index into the
-                # buffer at which we found the newline plus 1, minus the start
-                # index of the buffer, which really should be zero.
                 assert not self._index
                 length = index + 1
                 data = self._buffer_view[:length]
@@ -232,8 +167,6 @@ class BufferedSocket(object):
                 self._bytes_in_buffer -= length
                 return data
 
-        # If we got here, it means we filled the buffer without ever getting
-        # a newline. Time to throw an exception.
         raise LineTooLongError()
 
     def __getattr__(self, name):

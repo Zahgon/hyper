@@ -1,15 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-hyper/ssl_compat
-~~~~~~~~~
-
-Shoves pyOpenSSL into an API that looks like the standard Python 3.x ssl
-module.
-
-Currently exposes exactly those attributes, classes, and methods that we
-actually use in hyper (all method signatures are complete, however). May be
-expanded to something more general-purpose in the future.
-"""
 try:
     import StringIO as BytesIO
 except ImportError:
@@ -36,7 +25,6 @@ for external, internal in _OPENSSL_ATTRS.items():
         locals()[external] = value
 
 OP_ALL = 0
-# TODO: Find out the names of these other flags.
 for bit in [31] + list(range(10)):
     OP_ALL |= 1 << bit
 
@@ -44,19 +32,13 @@ HAS_NPN = True
 
 
 def _proxy(method):
-    def inner(self, *args, **kwargs):
-        return getattr(self._conn, method)(*args, **kwargs)
-    return inner
+    pass
 
 
-# Referenced in hyper/http20/connection.py. These values come
-# from the python ssl package, and must be defined in this file
-# for hyper to work in python versions <2.7.9
 SSL_ERROR_WANT_READ = 2
 SSL_ERROR_WANT_WRITE = 3
 
 
-# TODO missing some attributes
 class SSLError(OSError):
     pass
 
@@ -93,7 +75,6 @@ class SSLSocket(object):
                     server_hostname.encode('utf-8')
                 )
                 self._server_hostname = server_hostname
-            # FIXME does this override do_handshake_on_connect=False?
             self._conn.set_connect_state()
 
         if self.connected and self._do_handshake_on_connect:
@@ -101,18 +82,8 @@ class SSLSocket(object):
 
     @property
     def connected(self):
-        try:
-            self._conn.getpeername()
-        except socket.error as e:
-            if e.errno != errno.ENOTCONN:
-                # It's an exception other than the one we expected if we're not
-                # connected.
-                raise
-            return False
-        return True
+        pass
 
-    # Lovingly stolen from CherryPy
-    # (http://svn.cherrypy.org/tags/cherrypy-3.2.1/cherrypy/wsgiserver/ssl_pyopenssl.py).
     def _safe_ssl_call(self, suppress_ragged_eofs, call, *args, **kwargs):
         """Wrap the given call with SSL error-trapping."""
         start = time.time()
@@ -120,10 +91,6 @@ class SSLSocket(object):
             try:
                 return call(*args, **kwargs)
             except (ossl.WantReadError, ossl.WantWriteError):
-                # Sleep and try again. This is dangerous, because it means
-                # the rest of the stack has no way of differentiating
-                # between a "new handshake" error and "client dropped".
-                # Note this isn't an endless loop: there's a timeout below.
                 time.sleep(self.SSL_RETRY)
             except ossl.Error as e:
                 if suppress_ragged_eofs and e.args == (-1, 'Unexpected EOF'):
@@ -152,8 +119,6 @@ class SSLSocket(object):
         )
 
     def recv_into(self, buffer, bufsize=None, flags=None):
-        # A temporary recv_into implementation. Should be replaced when
-        # PyOpenSSL has merged pyca/pyopenssl#121.
         if bufsize is None:
             bufsize = len(buffer)
 
@@ -194,9 +159,6 @@ class SSLSocket(object):
             ).get(alias, alias)
 
         def to_components(name):
-            # TODO Verify that these are actually *supposed* to all be
-            # single-element tuples, and that's not just a quirk of the
-            # examples I've seen.
             return tuple(
                 [
                     (resolve_alias(k.decode('utf-8'), v.decode('utf-8')),)
@@ -204,9 +166,6 @@ class SSLSocket(object):
                 ]
             )
 
-        # The standard getpeercert() takes the nice X509 object tree returned
-        # by OpenSSL and turns it into a dict according to some format it seems
-        # to have made up on the spot. Here, we do our best to emulate that.
         cert = self._conn.get_peer_certificate()
         result = dict(
             issuer=to_components(cert.get_issuer()),
@@ -216,11 +175,8 @@ class SSLSocket(object):
             notBefore=cert.get_notBefore(),
             notAfter=cert.get_notAfter(),
         )
-        # TODO extensions, including subjectAltName
-        # (see _decode_certificate in _ssl.c)
         return result
 
-    # a dash of magic to reduce boilerplate
     methods = ['accept', 'bind', 'close', 'getsockname', 'listen', 'fileno']
     for method in methods:
         locals()[method] = _proxy(method)
@@ -236,29 +192,24 @@ class SSLContext(object):
 
     @property
     def options(self):
-        return self._options
+        pass
 
     @options.setter
     def options(self, value):
-        self._options = value
-        self._ctx.set_options(value)
+        pass
 
     @property
     def verify_mode(self):
-        return self._ctx.get_verify_mode()
+        pass
 
     @verify_mode.setter
     def verify_mode(self, value):
-        # TODO verify exception is raised on failure
-        self._ctx.set_verify(
-            value, lambda conn, cert, errnum, errdepth, ok: ok
-        )
+        pass
 
     def set_default_verify_paths(self):
         self._ctx.set_default_verify_paths()
 
     def load_verify_locations(self, cafile=None, capath=None, cadata=None):
-        # TODO factor out common code
         if cafile is not None:
             cafile = cafile.encode('utf-8')
         if capath is not None:
@@ -279,15 +230,7 @@ class SSLContext(object):
         self.protocols = list(map(lambda x: x.encode('ascii'), protocols))
 
         def cb(conn, protos):
-            # Detect the overlapping set of protocols.
-            overlap = set(protos) & set(self.protocols)
-
-            # Select the option that comes last in the list in the overlap.
-            for p in self.protocols:
-                if p in overlap:
-                    return p
-            else:
-                return b''
+            pass
 
         self._ctx.set_npn_select_callback(cb)
 
@@ -304,5 +247,4 @@ class SSLContext(object):
         conn = ossl.Connection(self._ctx, sock)
         return SSLSocket(conn, server_side, do_handshake_on_connect,
                          suppress_ragged_eofs, server_hostname,
-                         # TODO what if this is changed after the fact?
                          self.check_hostname)

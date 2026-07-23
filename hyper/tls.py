@@ -1,10 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-hyper/tls
-~~~~~~~~~
-
-Contains the TLS/SSL logic for use in hyper.
-"""
 import os.path as path
 from .common.exceptions import MissingCertFile
 from .compat import ignore_missing, ssl
@@ -16,11 +10,8 @@ SUPPORTED_NPN_PROTOCOLS = H2_NPN_PROTOCOLS + ['http/1.1']
 
 H2C_PROTOCOL = 'h2c'
 
-# We have a singleton SSLContext object. There's no reason to be creating one
-# per connection.
 _context = None
 
-# Work out where our certificates are.
 cert_loc = path.join(path.dirname(__file__), 'certs.pem')
 
 
@@ -33,30 +24,21 @@ def wrap_socket(sock, server_hostname, ssl_context=None, force_proto=None):
     global _context
 
     if ssl_context:
-        # if an SSLContext is provided then use it instead of default context
         _ssl_context = ssl_context
     else:
-        # create the singleton SSLContext we use
         if _context is None:  # pragma: no cover
             _context = init_context()
         _ssl_context = _context
 
-    # the spec requires SNI support
     ssl_sock = _ssl_context.wrap_socket(sock, server_hostname=server_hostname)
-    # Setting SSLContext.check_hostname to True only verifies that the
-    # post-handshake servername matches that of the certificate. We also need
-    # to check that it matches the requested one.
     if _ssl_context.check_hostname:  # pragma: no cover
         try:
             ssl.match_hostname(ssl_sock.getpeercert(), server_hostname)
         except AttributeError:
             ssl.verify_hostname(ssl_sock, server_hostname)  # pyopenssl
 
-    # Allow for the protocol to be forced externally.
     proto = force_proto
 
-    # ALPN is newer, so we prefer it over NPN. The odds of us getting
-    # different answers is pretty low, but let's be sure.
     with ignore_missing():
         if proto is None:
             proto = ssl_sock.selected_alpn_protocol()
@@ -117,7 +99,6 @@ def init_context(cert_path=None, cert=None, cert_password=None):
     with ignore_missing():
         context.set_alpn_protocols(SUPPORTED_NPN_PROTOCOLS)
 
-    # required by the spec
     context.options |= ssl.OP_NO_COMPRESSION
 
     if cert is not None:

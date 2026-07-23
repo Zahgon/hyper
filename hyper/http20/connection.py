@@ -1,10 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-hyper/http20/connection
-~~~~~~~~~~~~~~~~~~~~~~~
-
-Objects that build hyper's connection-level HTTP/2 abstraction.
-"""
 import h2.connection
 import h2.events
 import h2.settings
@@ -40,14 +34,6 @@ TRANSIENT_SSL_ERRORS = (ssl.SSL_ERROR_WANT_READ, ssl.SSL_ERROR_WANT_WRITE)
 
 
 class _LockedObject(object):
-    """
-    A wrapper class that hides a specific object behind a lock.
-
-    The goal here is to provide a simple way to protect access to an object
-    that cannot safely be simultaneously accessed from multiple threads. The
-    intended use of this class is simple: take hold of it with a context
-    manager, which returns the protected object.
-    """
     def __init__(self, obj):
         self.lock = threading.RLock()
         self._obj = obj
@@ -61,41 +47,6 @@ class _LockedObject(object):
 
 
 class HTTP20Connection(object):
-    """
-    An object representing a single HTTP/2 connection to a server.
-
-    This object behaves similarly to the Python standard library's
-    ``HTTPConnection`` object, with a few critical differences.
-
-    Most of the standard library's arguments to the constructor are irrelevant
-    for HTTP/2 or not supported by hyper.
-
-    :param host: The host to connect to. This may be an IP address or a
-        hostname, and optionally may include a port: for example,
-        ``'http2bin.org'``, ``'http2bin.org:443'`` or ``'127.0.0.1'``.
-    :param port: (optional) The port to connect to. If not provided and one
-        also isn't provided in the ``host`` parameter, defaults to 443.
-    :param secure: (optional) Whether the request should use TLS. Defaults to
-        ``False`` for most requests, but to ``True`` for any request issued to
-        port 443.
-    :param window_manager: (optional) The class to use to manage flow control
-        windows. This needs to be a subclass of the
-        :class:`BaseFlowControlManager
-        <hyper.http20.window.BaseFlowControlManager>`. If not provided,
-        :class:`FlowControlManager <hyper.http20.window.FlowControlManager>`
-        will be used.
-    :param enable_push: (optional) Whether the server is allowed to push
-        resources to the client (see
-        :meth:`get_pushes() <hyper.HTTP20Connection.get_pushes>`).
-    :param ssl_context: (optional) A class with custom certificate settings.
-        If not provided then hyper's default ``SSLContext`` is used instead.
-    :param proxy_host: (optional) The proxy to connect to.  This can be an IP
-        address or a host name and may include a port.
-    :param proxy_port: (optional) The proxy port to connect to. If not provided
-        and one also isn't provided in the ``proxy_host`` parameter, defaults
-        to 8080.
-    :param proxy_headers: (optional) The headers to send to a proxy.
-    """
 
     version = HTTPVersion.http20
 
@@ -121,7 +72,6 @@ class HTTP20Connection(object):
         self._enable_push = enable_push
         self.ssl_context = ssl_context
 
-        # Setup proxy details if applicable.
         if proxy_host and proxy_port is None:
             self.proxy_host, self.proxy_port = to_host_port_tuple(
                 proxy_host, default_port=8080
@@ -133,25 +83,15 @@ class HTTP20Connection(object):
             self.proxy_port = None
         self.proxy_headers = proxy_headers
 
-        #: The size of the in-memory buffer used to store data from the
-        #: network. This is used as a performance optimisation. Increase buffer
-        #: size to improve performance: decrease it to conserve memory.
-        #: Defaults to 64kB.
         self.network_buffer_size = 65536
 
         self.force_proto = force_proto
 
-        # Concurrency
-        #
-        # Use one universal lock (_lock) to synchronize all interaction
-        # with global connection state, _send_cb and _recv_cb.
         self._lock = threading.RLock()
 
-        # Create the mutable state.
         self.__wm_class = window_manager or FlowControlManager
         self.__init_state()
 
-        # timeout
         self._timeout = timeout
 
         return
@@ -172,50 +112,20 @@ class HTTP20Connection(object):
         """
         self._conn = _LockedObject(h2.connection.H2Connection())
 
-        # Streams are stored in a dictionary keyed off their stream IDs. We
-        # also save the most recent one for easy access without having to walk
-        # the dictionary.
-        #
-        # We add a set of all streams that we or the remote party forcefully
-        # closed with RST_STREAM, to avoid encountering issues where frames
-        # were already in flight before the RST was processed.
-        #
-        # Finally, we add a set of streams that recently received data.  When
-        # using multiple threads, this avoids reading on threads that have just
-        # acquired the I/O lock whose streams have already had their data read
-        # for them by prior threads.
         self.streams = {}
         self.recent_stream = None
         self.next_stream_id = 1
         self.reset_streams = set()
         self.recent_recv_streams = set()
 
-        # The socket used to send data.
         self._sock = None
 
-        # Instantiate a window manager.
         self.window_manager = self.__wm_class(65535)
 
         return
 
     def ping(self, opaque_data):
-        """
-        Send a PING frame.
-
-        Concurrency
-        -----------
-
-        This method is thread-safe.
-
-        :param opaque_data: A bytestring of length 8 that will be sent in the
-                            PING frame.
-        :returns: Nothing
-        """
-        self.connect()
-        with self._lock:
-            with self._conn as conn:
-                conn.ping(to_bytestring(opaque_data))
-            self._send_outstanding_data()
+        pass
 
     def request(self, method, url, body=None, headers=None):
         """
@@ -240,20 +150,7 @@ class HTTP20Connection(object):
         """
         headers = headers or {}
 
-        # Concurrency
-        #
-        # It's necessary to hold a lock while this method runs to satisfy H2
-        # protocol requirements.
-        #
-        # - putrequest obtains the next valid new stream_id
-        # - endheaders sends a http2 message using the new stream_id
-        #
-        # If threads interleave these operations, it could result in messages
-        # being sent in the wrong order, which can lead to the out-of-order
-        # messages with lower stream IDs being closed prematurely.
         with self._lock:
-            # Unlike HTTP/1.1, HTTP/2 (according to RFC 7540) doesn't require
-            # to use absolute URI when proxying.
 
             stream_id = self.putrequest(method, url)
 
@@ -267,7 +164,6 @@ class HTTP20Connection(object):
                 is_default = to_native_string(name) in default_headers
                 self.putheader(name, value, stream_id, replace=is_default)
 
-            # Convert the body to bytes if needed.
             if body and isinstance(body, (unicode, bytes)):
                 body = to_bytestring(body)
 
@@ -305,28 +201,7 @@ class HTTP20Connection(object):
         return HTTP20Response(stream.getheaders(), stream)
 
     def get_pushes(self, stream_id=None, capture_all=False):
-        """
-        Returns a generator that yields push promises from the server. **Note
-        that this method is not idempotent**: promises returned in one call
-        will not be returned in subsequent calls. Iterating through generators
-        returned by multiple calls to this method simultaneously results in
-        undefined behavior.
-
-        :param stream_id: (optional) The stream ID of the request for which to
-            get push promises.
-        :param capture_all: (optional) If ``False``, the generator will yield
-            all buffered push promises without blocking. If ``True``, the
-            generator will first yield all buffered push promises, then yield
-            additional ones as they arrive, and terminate when the original
-            stream closes.
-        :returns: A generator of :class:`HTTP20Push <hyper.HTTP20Push>` objects
-            corresponding to the streams pushed by the server.
-        """
-        stream = self._get_stream(stream_id)
-        for promised_stream_id, headers in stream.get_pushes(capture_all):
-            yield HTTP20Push(
-                HTTPHeaderMap(headers), self.streams[promised_stream_id]
-            )
+        pass
 
     def connect(self):
         """
@@ -354,7 +229,6 @@ class HTTP20Connection(object):
                 read_timeout = self._timeout
 
             if self.proxy_host and self.secure:
-                # Send http CONNECT method to a proxy and acquire the socket
                 sock = _create_tunnel(
                     self.proxy_host,
                     self.proxy_port,
@@ -364,7 +238,6 @@ class HTTP20Connection(object):
                     timeout=self._timeout
                 )
             elif self.proxy_host:
-                # Simple http proxy
                 sock = socket.create_connection(
                     (self.proxy_host, self.proxy_port),
                     timeout=connect_timeout
@@ -387,7 +260,6 @@ class HTTP20Connection(object):
 
             self._sock = BufferedSocket(sock, self.network_buffer_size)
 
-            # Set read timeout
             self._sock.settimeout(read_timeout)
 
             self._send_preamble()
@@ -407,9 +279,6 @@ class HTTP20Connection(object):
             )
         self._send_outstanding_data()
 
-        # The server will also send an initial settings frame, so get it.
-        # However, we need to make sure our stream state is set up properly
-        # first, or any extra data we receive might cause us problems.
         s = self._new_stream(local_closed=True)
         self.recent_stream = s
 
@@ -419,8 +288,6 @@ class HTTP20Connection(object):
         """
         Sends the necessary HTTP/2 preamble.
         """
-        # We need to send the connection header immediately on this
-        # connection, followed by an initial settings frame.
         with self._conn as conn:
             conn.initiate_connection()
             conn.update_settings(
@@ -428,7 +295,6 @@ class HTTP20Connection(object):
             )
         self._send_outstanding_data()
 
-        # The server will also send an initial settings frame, so get it.
         self._recv_cb()
 
     def close(self, error_code=None):
@@ -443,20 +309,11 @@ class HTTP20Connection(object):
         :param error_code: (optional) The error code to reset all streams with.
         :returns: Nothing.
         """
-        # Concurrency
-        #
-        # It's necessary to hold the lock here to ensure that threads closing
-        # the connection see consistent state, and to prevent creation of
-        # of new streams while the connection is being closed.
-        #
-        # I/O occurs while the lock is held; waiting threads will see a delay.
         with self._lock:
-            # Close all streams
             for stream in list(self.streams.values()):
                 log.debug("Close stream %d" % stream.stream_id)
                 stream.close(error_code)
 
-            # Send GoAway frame to the server
             try:
                 with self._conn as conn:
                     conn.close_connection(error_code or 0)
@@ -470,11 +327,6 @@ class HTTP20Connection(object):
 
     def _send_outstanding_data(self, tolerate_peer_gone=False,
                                send_empty=True):
-        # Concurrency
-        #
-        # Hold _lock; getting and writing data from _conn is synchronized
-        #
-        # I/O occurs while the lock is held; waiting threads will see a delay.
         with self._lock:
             with self._conn as conn:
                 data = conn.data_to_send()
@@ -497,18 +349,13 @@ class HTTP20Connection(object):
         :param selector: The path selector.
         :returns: A stream ID for the request.
         """
-        # Create a new stream.
         s = self._new_stream()
 
-        # To this stream we need to immediately add a few headers that are
-        # HTTP/2 specific. These are: ":method", ":scheme", ":authority" and
-        # ":path". We can set all of these now.
         s.add_header(":method", method)
         s.add_header(":scheme", "https" if self.secure else "http")
         s.add_header(":authority", self.host)
         s.add_header(":path", selector)
 
-        # Save the stream.
         self.recent_stream = s
 
         return s.stream_id
@@ -563,14 +410,9 @@ class HTTP20Connection(object):
 
         headers_only = (message_body is None and final)
 
-        # Concurrency:
-        #
-        # Hold _lock: synchronize access to the connection's HPACK
-        # encoder and decoder and the subsquent write to the connection
         with self._lock:
             stream.send_headers(headers_only)
 
-            # Send whatever data we have.
             if message_body is not None:
                 stream.send_data(message_body, final)
 
@@ -601,12 +443,6 @@ class HTTP20Connection(object):
         """
         Returns a new stream object for this connection.
         """
-        # Concurrency
-        #
-        # Hold _lock: ensure that threads accessing the connection see
-        # self.next_stream_id in a consistent state
-        #
-        # No I/O occurs, the delay in waiting threads depends on their number.
         with self._lock:
             s = Stream(
                 stream_id or self.next_stream_id,
@@ -628,11 +464,6 @@ class HTTP20Connection(object):
 
         This acts as a dumb wrapper around the socket send method.
         """
-        # Concurrency
-        #
-        # Hold _lock: ensures only writer at a time
-        #
-        # I/O occurs while the lock is held; waiting threads will see a delay.
         with self._lock:
             try:
                 self._sock.sendall(data)
@@ -646,13 +477,6 @@ class HTTP20Connection(object):
         Adjusts the window size in response to receiving a DATA frame of length
         ``frame_len``. May send a WINDOWUPDATE frame if necessary.
         """
-        # Concurrency
-        #
-        # Hold _lock; synchronize the window manager update and the
-        # subsequent potential write to the connection
-        #
-        # I/O may occur while the lock is held; waiting threads may see a
-        # delay.
         with self._lock:
             increment = self.window_manager._handle_frame(frame_len)
 
@@ -668,13 +492,6 @@ class HTTP20Connection(object):
         Performs a single read from the socket and hands the data off to the
         h2 connection object.
         """
-        # Begin by reading what we can from the socket.
-        #
-        # Concurrency
-        #
-        # Synchronizes reading the data
-        #
-        # I/O occurs while the lock is held; waiting threads will see a delay.
         with self._lock:
             if self._sock is None:
                 raise ConnectionError('tried to read after connection close')
@@ -697,10 +514,6 @@ class HTTP20Connection(object):
                     self._new_stream(event.pushed_stream_id, local_closed=True)
                     self.streams[event.parent_stream_id].receive_push(event)
                 else:
-                    # Servers are forbidden from sending push promises when
-                    # the ENABLE_PUSH setting is 0, but the spec leaves the
-                    # client action undefined when they do it anyway. So we
-                    # just refuse the stream and go about our business.
                     self._send_rst_frame(event.pushed_stream_id, 7)
             elif isinstance(event, h2.events.ResponseReceived):
                 self.streams[event.stream_id].receive_response(event)
@@ -713,13 +526,8 @@ class HTTP20Connection(object):
                     self.reset_streams.add(event.stream_id)
                     self.streams[event.stream_id].receive_reset(event)
             elif isinstance(event, h2.events.ConnectionTerminated):
-                # If we get GoAway with error code zero, we are doing a
-                # graceful shutdown and all is well. Otherwise, throw an
-                # exception.
                 self.close()
 
-                # If an error occured, try to read the error description from
-                # code registry otherwise use the frame's additional data.
                 if event.error_code != 0:
                     try:
                         name, number, description = errors.get_data(
@@ -757,18 +565,6 @@ class HTTP20Connection(object):
             from the connection.
 
         """
-        # Begin by reading what we can from the socket.
-        #
-        # Concurrency
-        #
-        # Ignore this read if some other thread has recently read data from
-        # from the requested stream.
-        #
-        # The lock here looks broad, but is needed to ensure correct behavior
-        # when there are multiple readers of the same stream.  It is
-        # re-acquired in the calls to self._single_read.
-        #
-        # I/O occurs while the lock is held; waiting threads will see a delay.
         with self._lock:
             log.debug('recv for stream %d with %s already present',
                       stream_id,
@@ -777,34 +573,25 @@ class HTTP20Connection(object):
                 self.recent_recv_streams.discard(stream_id)
                 return
 
-            # make sure to validate the stream is readable.
-            # if the connection was reset, this stream id won't appear in
-            # self.streams and will cause this call to raise an exception.
             if stream_id:
                 self._get_stream(stream_id)
 
-            # TODO: Re-evaluate this.
             self._single_read()
             count = 9
             retry_wait = 0.05  # can improve responsiveness to delay the retry
 
             while count and self._sock is not None and self._sock.can_read:
-                # If the connection has been closed, bail out, but retry
-                # on transient errors.
                 try:
                     self._single_read()
                 except ConnectionResetError:
                     break
                 except ssl.SSLError as e:  # pragma: no cover
-                    # these are transient errors that can occur while reading
-                    # from ssl connections.
                     if e.args[0] in TRANSIENT_SSL_ERRORS:
                         continue
                     else:
                         raise
                 except socket.error as e:  # pragma: no cover
                     if e.errno in (errno.EINTR, errno.EAGAIN):
-                        # if 'interrupted' or 'try again', continue
                         time.sleep(retry_wait)
                         continue
                     elif e.errno == errno.ECONNRESET:
@@ -818,21 +605,11 @@ class HTTP20Connection(object):
         """
         Send reset stream frame with error code and remove stream from map.
         """
-        # Concurrency
-        #
-        # Hold _lock; synchronize generating the reset frame and writing
-        # it
-        #
-        # I/O occurs while the lock is held; waiting threads will see a delay.
         with self._lock:
             with self._conn as conn:
                 conn.reset_stream(stream_id, error_code=error_code)
             self._send_outstanding_data()
 
-        # Concurrency
-        #
-        # Hold _lock; the stream storage is being updated. No I/O occurs, any
-        # delay is proportional to the number of waiting threads.
         with self._lock:
             try:
                 del self.streams[stream_id]
@@ -842,22 +619,11 @@ class HTTP20Connection(object):
                     "Stream with id %d does not exist: %s",
                     stream_id, e)
 
-            # Keep track of the fact that we reset this stream in case there
-            # are other frames in flight.
             self.reset_streams.add(stream_id)
 
     def _stream_close_cb(self, stream_id):
-        """
-        Called by a stream when it is closing, so that state can be cleared.
-        """
-        try:
-            del self.streams[stream_id]
-            self.recent_recv_streams.discard(stream_id)
-        except KeyError:
-            pass
+        pass
 
-    # The following two methods are the implementation of the context manager
-    # protocol.
     def __enter__(self):
         return self
 

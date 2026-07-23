@@ -1,66 +1,11 @@
 # -*- coding: utf-8 -*-
-"""
-hyper/common/headers
-~~~~~~~~~~~~~~~~~~~~~
-
-Contains hyper's structures for storing and working with HTTP headers.
-"""
 import collections
 
 from hyper.common.util import to_bytestring, to_bytestring_tuple
 
 
 class HTTPHeaderMap(collections.MutableMapping):
-    """
-    A structure that contains HTTP headers.
-
-    HTTP headers are a curious beast. At the surface level they look roughly
-    like a name-value set, but in practice they have many variations that
-    make them tricky:
-
-    - duplicate keys are allowed
-    - keys are compared case-insensitively
-    - duplicate keys are isomorphic to comma-separated values, *except when
-      they aren't*!
-    - they logically contain a form of ordering
-
-    This data structure is an attempt to preserve all of that information
-    while being as user-friendly as possible. It retains all of the mapping
-    convenience methods (allowing by-name indexing), while avoiding using a
-    dictionary for storage.
-
-    When iterated over, this structure returns headers in 'canonical form'.
-    This form is a tuple, where the first entry is the header name (in
-    lower-case), and the second entry is a list of header values (in original
-    case).
-
-    The mapping always emits both names and values in the form of bytestrings:
-    never unicode strings. It can accept names and values in unicode form, and
-    will automatically be encoded to bytestrings using UTF-8. The reason for
-    what appears to be a user-unfriendly decision here is primarily to allow
-    the broadest-possible compatibility (to make it possible to send headers in
-    unusual encodings) while ensuring that users are never confused about what
-    type of data they will receive.
-
-    .. warning:: Note that this data structure makes none of the performance
-                 guarantees of a dictionary. Lookup and deletion is not an O(1)
-                 operation. Inserting a new value *is* O(1), all other
-                 operations are O(n), including *replacing* a header entirely.
-    """
     def __init__(self, *args, **kwargs):
-        # The meat of the structure. In practice, headers are an ordered list
-        # of tuples. This early version of the data structure simply uses this
-        # directly under the covers.
-        #
-        # An important curiosity here is that the headers are not stored in
-        # 'canonical form', but are instead stored in the form they were
-        # provided in. This is to ensure that it is always possible to
-        # reproduce the original header structure if necessary. This leads to
-        # some unfortunate performance costs on structure access where it is
-        # often necessary to transform the data into canonical form on access.
-        # This cost is judged acceptable in low-level code like `hyper`, but
-        # higher-level abstractions should consider if they really require this
-        # logic.
         self._items = []
 
         for arg in args:
@@ -193,13 +138,10 @@ class HTTPHeaderMap(collections.MutableMapping):
             if _keys_equal(k, key):
                 indices.append(i)
 
-        # If the key isn't present, this is easy: just append and abort early.
         if not indices:
             self._items.append((key, value))
             return
 
-        # Delete all but the first. I swear, this is the correct slicing
-        # syntax!
         base_index = indices[0]
         for i in indices[:0:-1]:
             self._items.pop(i)
@@ -211,8 +153,6 @@ class HTTPHeaderMap(collections.MutableMapping):
         """
         Merge another header set or any other dict-like into this one.
         """
-        # Short circuit to avoid infinite loops in case we try to merge into
-        # ourselves.
         if other is self:
             return
 

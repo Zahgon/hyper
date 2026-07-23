@@ -1,10 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-hyper/http11/connection
-~~~~~~~~~~~~~~~~~~~~~~~
-
-Objects that build hyper's connection-level HTTP/1.1 abstraction.
-"""
 import logging
 import os
 import socket
@@ -25,7 +19,6 @@ from ..common.util import (
 )
 from ..compat import bytes
 
-# We prefer pycohttpparser to the pure-Python interpretation
 try:  # pragma: no cover
     from pycohttpparser.api import Parser
 except ImportError:  # pragma: no cover
@@ -61,7 +54,6 @@ def _create_tunnel(proxy_host, proxy_port, target_host, target_port,
 
 
 def _headers_to_http_header_map(headers):
-    # TODO turn this to a classmethod of HTTPHeaderMap
     headers = headers or {}
     if not isinstance(headers, HTTPHeaderMap):
         if isinstance(headers, Mapping):
@@ -76,26 +68,6 @@ def _headers_to_http_header_map(headers):
 
 
 class HTTP11Connection(object):
-    """
-    An object representing a single HTTP/1.1 connection to a server.
-
-    :param host: The host to connect to. This may be an IP address or a
-        hostname, and optionally may include a port: for example,
-        ``'twitter.com'``, ``'twitter.com:443'`` or ``'127.0.0.1'``.
-    :param port: (optional) The port to connect to. If not provided and one
-        also isn't provided in the ``host`` parameter, defaults to 80.
-    :param secure: (optional) Whether the request should use TLS. Defaults to
-        ``False`` for most requests, but to ``True`` for any request issued to
-        port 443.
-    :param ssl_context: (optional) A class with custom certificate settings.
-        If not provided then hyper's default ``SSLContext`` is used instead.
-    :param proxy_host: (optional) The proxy to connect to.  This can be an IP
-        address or a host name and may include a port.
-    :param proxy_port: (optional) The proxy port to connect to. If not provided
-        and one also isn't provided in the ``proxy_host`` parameter,
-        defaults to 8080.
-    :param proxy_headers: (optional) The headers to send to a proxy.
-    """
 
     version = HTTPVersion.http11
 
@@ -107,9 +79,6 @@ class HTTP11Connection(object):
         else:
             self.host, self.port = host, port
 
-        # Record whether we plan to secure the request. In future this should
-        # be extended to a security profile, but a bool will do for now.
-        # TODO: Actually do something with this!
         if secure is not None:
             self.secure = secure
         elif self.port == 443:
@@ -117,18 +86,14 @@ class HTTP11Connection(object):
         else:
             self.secure = False
 
-        # only send http upgrade headers for non-secure connection
         self._send_http_upgrade = not self.secure
         self._enable_push = kwargs.get('enable_push')
 
         self.ssl_context = ssl_context
         self._sock = None
 
-        # Keep the current request method in order to be able to know
-        # in get_response() what was the request verb.
         self._current_request_method = None
 
-        # Setup proxy details if applicable.
         if proxy_host and proxy_port is None:
             self.proxy_host, self.proxy_port = to_host_port_tuple(
                 proxy_host, default_port=8080
@@ -140,17 +105,10 @@ class HTTP11Connection(object):
             self.proxy_port = None
         self.proxy_headers = proxy_headers
 
-        #: The size of the in-memory buffer used to store data from the
-        #: network. This is used as a performance optimisation. Increase buffer
-        #: size to improve performance: decrease it to conserve memory.
-        #: Defaults to 64kB.
         self.network_buffer_size = 65536
 
-        #: The object used to perform HTTP/1.1 parsing. Needs to conform to
-        #: the standard hyper parsing interface.
         self.parser = Parser()
 
-        # timeout
         self._timeout = timeout
 
     def connect(self):
@@ -170,7 +128,6 @@ class HTTP11Connection(object):
                 read_timeout = self._timeout
 
             if self.proxy_host and self.secure:
-                # Send http CONNECT method to a proxy and acquire the socket
                 sock = _create_tunnel(
                     self.proxy_host,
                     self.proxy_port,
@@ -180,7 +137,6 @@ class HTTP11Connection(object):
                     timeout=self._timeout
                 )
             elif self.proxy_host:
-                # Simple http proxy
                 sock = socket.create_connection(
                     (self.proxy_host, self.proxy_port),
                     timeout=connect_timeout
@@ -196,7 +152,6 @@ class HTTP11Connection(object):
             log.debug("Selected protocol: %s", proto)
             sock = BufferedSocket(sock, self.network_buffer_size)
 
-            # Set read timeout
             sock.settimeout(read_timeout)
 
             if proto not in ('http/1.1', None):
@@ -228,15 +183,11 @@ class HTTP11Connection(object):
         self._current_request_method = method
 
         if self.proxy_host and not self.secure:
-            # As per https://tools.ietf.org/html/rfc2068#section-5.1.2:
-            # The absoluteURI form is required when the request is being made
-            # to a proxy.
             url = self._absolute_http_url(url)
         url = to_bytestring(url)
 
         headers = _headers_to_http_header_map(headers)
 
-        # Append proxy headers.
         if self.proxy_host and not self.secure:
             headers.update(
                 _headers_to_http_header_map(self.proxy_headers).items()
@@ -249,17 +200,14 @@ class HTTP11Connection(object):
             self._add_upgrade_headers(headers)
             self._send_http_upgrade = False
 
-        # We may need extra headers.
         if body:
             body_type = self._add_body_headers(headers, body)
 
         if not is_connect_method and b'host' not in headers:
             headers[b'host'] = self.host
 
-        # Begin by emitting the header block.
         self._send_headers(method, url, headers)
 
-        # Next, send the request body.
         if body:
             self._send_body(body, body_type)
 
@@ -283,7 +231,6 @@ class HTTP11Connection(object):
 
         response = None
         while response is None:
-            # 'encourage' the socket to receive data.
             self._sock.fill()
             response = self.parser.parse_response(self._sock.buffer)
 
@@ -292,12 +239,6 @@ class HTTP11Connection(object):
 
         self._sock.advance_buffer(response.consumed)
 
-        # Check for a successful "switching protocols to h2c" response.
-        # "Connection: upgrade" is not strictly necessary on the receiving end,
-        # but we want to fail fast on broken servers or intermediaries:
-        # https://github.com/Lukasa/hyper/issues/312.
-        # Connection options are case-insensitive, while upgrade tokens are
-        # case-sensitive: https://github.com/httpwg/http11bis/issues/8.
         if (response.status == 101 and
                 b'upgrade' in map(bytes.lower, headers['connection']) and
                 H2C_PROTOCOL.encode('utf-8') in headers['upgrade']):
@@ -339,8 +280,6 @@ class HTTP11Connection(object):
         if b'chunked' in headers.get(b'transfer-encoding', []):
             return BODY_CHUNKED
 
-        # For bytestring bodies we upload the content with a fixed length.
-        # For file objects, we use the length of the file object.
         if isinstance(body, bytes):
             length = str(len(body)).encode('utf-8')
         elif hasattr(body, 'fileno'):
@@ -356,12 +295,9 @@ class HTTP11Connection(object):
         return BODY_CHUNKED
 
     def _add_upgrade_headers(self, headers):
-        # Add HTTP Upgrade headers.
         headers[b'connection'] = b'Upgrade, HTTP2-Settings'
         headers[b'upgrade'] = H2C_PROTOCOL
 
-        # Encode SETTINGS frame payload in Base64 and put into the HTTP-2
-        # Settings header.
         http2_settings = SettingsFrame(0)
         http2_settings.settings[SettingsFrame.INITIAL_WINDOW_SIZE] = 65535
         if self._enable_push is not None:
@@ -379,17 +315,14 @@ class HTTP11Connection(object):
         different things in different cases.
         """
         if body_type == BODY_FLAT:
-            # Special case for files and other 'readable' objects.
             if hasattr(body, 'read'):
                 return self._send_file_like_obj(body)
 
-            # Case for bytestrings.
             elif isinstance(body, bytes):
                 self._sock.send(body)
 
                 return
 
-            # Iterables that set a specific content length.
             elif isinstance(body, collections.Iterable):
                 for item in body:
                     try:
@@ -408,20 +341,15 @@ class HTTP11Connection(object):
                     'Got: {}'.format(type(body))
                 )
 
-        # Chunked!
         return self._send_chunked(body)
 
     def _send_chunked(self, body):
         """
         Handles the HTTP/1.1 logic for sending a chunk-encoded body.
         """
-        # Chunked! For chunked bodies we don't special-case, we just iterate
-        # over what we have and send stuff out.
         for chunk in body:
             length = '{0:x}'.format(len(chunk)).encode('ascii')
 
-            # For now write this as four 'send' calls. That's probably
-            # inefficient, let's come back to it.
             try:
                 self._sock.send(length)
                 self._sock.send(b'\r\n')
@@ -470,8 +398,6 @@ class HTTP11Connection(object):
             self._sock.close()
         self._sock = None
 
-    # The following two methods are the implementation of the context manager
-    # protocol.
     def __enter__(self):
         return self
 

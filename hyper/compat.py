@@ -1,11 +1,4 @@
 # -*- coding: utf-8 -*-
-# flake8: noqa
-"""
-hyper/compat
-~~~~~~~~~~~~
-
-Normalizes the Python 2/3 API for internal use.
-"""
 from contextlib import contextmanager
 import sys
 import zlib
@@ -13,7 +6,6 @@ import zlib
 try:
     from . import ssl_compat
 except ImportError:
-    # TODO log?
     ssl_compat = None
 
 _ver = sys.version_info
@@ -41,16 +33,15 @@ if is_py2:
     from itertools import imap
 
     def to_byte(char):
-        return ord(char)
+        pass
 
     def decode_hex(b):
-        return b.decode('hex')
+        pass
 
     def write_to_stdout(data):
         sys.stdout.write(data + '\n')
         sys.stdout.flush()
 
-    # The standard zlib.compressobj() accepts only positional arguments.
     def zlib_compressobj(level=6, method=zlib.DEFLATED, wbits=15, memlevel=8,
                          strategy=zlib.Z_DEFAULT_STRATEGY):
         return zlib.compressobj(level, method, wbits, memlevel, strategy)
@@ -64,10 +55,10 @@ elif is_py3:
     imap = map
 
     def to_byte(char):
-        return char
+        pass
 
     def decode_hex(b):
-        return bytes.fromhex(b)
+        pass
 
     def write_to_stdout(data):
         sys.stdout.buffer.write(data + b'\n')

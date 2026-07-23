@@ -1,10 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-hyper/cli
-~~~~~~~~~
-
-Command line interface for Hyper inspired by Httpie.
-"""
 import json
 import locale
 import logging
@@ -24,7 +18,6 @@ log = logging.getLogger('hyper')
 
 PREFERRED_ENCODING = locale.getpreferredencoding()
 
-# Various separators used in args
 SEP_HEADERS = ':'
 SEP_QUERY = '=='
 SEP_DATA = '='
@@ -37,7 +30,6 @@ SEP_GROUP_ITEMS = [
 
 
 class KeyValue(object):
-    """Base key-value pair parsed from CLI."""
 
     def __init__(self, key, value, sep, orig):
         self.key = key
@@ -47,12 +39,6 @@ class KeyValue(object):
 
 
 class KeyValueArgType(object):
-    """A key-value pair argument type used with `argparse`.
-
-    Parses a key-value arg and constructs a `KeyValue` instance.
-    Used for headers, form data, and other key-value pair types.
-    This class is inspired by httpie and implements simple tokenizer only.
-    """
     def __init__(self, *separators):
         self.separators = separators
 
@@ -142,7 +128,6 @@ def set_url_info(args):
     if info.scheme == 'http' and not _result.port:
         info.port = 80
 
-    # Set the secure arg is the scheme is HTTPS, otherwise do unsecured.
     info.secure = info.scheme == 'https'
 
     if info.netloc:
@@ -171,9 +156,6 @@ def set_request_data(args):
             if i.key:
                 headers[i.key] = i.value
             else:
-                # when overriding a HTTP/2 special header there will be a
-                # leading colon, which tricks the command line parser into
-                # thinking the header is empty
                 k, v = i.value.split(':', 1)
                 headers[':' + k] = v
         elif i.sep == SEP_QUERY:

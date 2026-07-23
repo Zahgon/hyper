@@ -1,10 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-hyper/common/connection
-~~~~~~~~~~~~~~~~~~~~~~~
-
-Hyper's HTTP/1.1 and HTTP/2 abstraction layer.
-"""
 from .exceptions import TLSUpgrade, HTTPUpgrade
 from ..http11.connection import HTTP11Connection
 from ..http20.connection import HTTP20Connection
@@ -12,42 +6,6 @@ from ..tls import H2_NPN_PROTOCOLS, H2C_PROTOCOL
 
 
 class HTTPConnection(object):
-    """
-    An object representing a single HTTP connection to a server.
-
-    This object behaves similarly to the Python standard library's
-    ``HTTPConnection`` object, with a few critical differences.
-
-    Most of the standard library's arguments to the constructor are not
-    supported by hyper. Most optional parameters apply to *either* HTTP/1.1 or
-    HTTP/2.
-
-    :param host: The host to connect to. This may be an IP address or a
-        hostname, and optionally may include a port: for example,
-        ``'http2bin.org'``, ``'http2bin.org:443'`` or ``'127.0.0.1'``.
-    :param port: (optional) The port to connect to. If not provided and one
-        also isn't provided in the ``host`` parameter, defaults to 80.
-    :param secure: (optional) Whether the request should use TLS.
-        Defaults to ``False`` for most requests, but to ``True`` for any
-        request issued to port 443.
-    :param window_manager: (optional) The class to use to manage flow control
-        windows. This needs to be a subclass of the
-        :class:`BaseFlowControlManager
-        <hyper.http20.window.BaseFlowControlManager>`. If not provided,
-        :class:`FlowControlManager <hyper.http20.window.FlowControlManager>`
-        will be used.
-    :param enable_push: (optional) Whether the server is allowed to push
-        resources to the client (see
-        :meth:`get_pushes() <hyper.HTTP20Connection.get_pushes>`).
-    :param ssl_context: (optional) A class with custom certificate settings.
-        If not provided then hyper's default ``SSLContext`` is used instead.
-    :param proxy_host: (optional) The proxy to connect to.  This can be an IP
-        address or a host name and may include a port.
-    :param proxy_port: (optional) The proxy port to connect to. If not provided
-        and one also isn't provided in the ``proxy_host`` parameter, defaults
-        to 8080.
-    :param proxy_headers: (optional) The headers to send to a proxy.
-    """
     def __init__(self,
                  host,
                  port=None,
@@ -77,7 +35,6 @@ class HTTPConnection(object):
             'timeout': timeout
         }
 
-        # Add any unexpected kwargs to both dictionaries.
         self._h1_kwargs.update(kwargs)
         self._h2_kwargs.update(kwargs)
 
@@ -110,9 +67,6 @@ class HTTPConnection(object):
                 method=method, url=url, body=body, headers=headers
             )
         except TLSUpgrade as e:
-            # We upgraded in the NPN/ALPN handshake. We can just go straight to
-            # the world of HTTP/2. Replace the backing object and insert the
-            # socket into it.
             assert e.negotiated in H2_NPN_PROTOCOLS
 
             self._conn = HTTP20Connection(
@@ -120,8 +74,6 @@ class HTTPConnection(object):
             )
             self._conn._sock = e.sock
 
-            # Because we skipped the connecting logic, we need to send the
-            # HTTP/2 preamble.
             self._conn._send_preamble()
 
             return self._conn.request(
@@ -135,9 +87,6 @@ class HTTPConnection(object):
         try:
             return self._conn.get_response(*args, **kwargs)
         except HTTPUpgrade as e:
-            # We upgraded via the HTTP Upgrade mechanism. We can just
-            # go straight to the world of HTTP/2. Replace the backing object
-            # and insert the socket into it.
             assert e.negotiated == H2C_PROTOCOL
 
             self._conn = HTTP20Connection(
@@ -145,13 +94,9 @@ class HTTPConnection(object):
             )
 
             self._conn._connect_upgrade(e.sock)
-            # stream id 1 is used by the upgrade request and response
-            # and is half-closed by the client
 
             return self._conn.get_response(1)
 
-    # The following two methods are the implementation of the context manager
-    # protocol.
     def __enter__(self):  # pragma: no cover
         return self
 
@@ -159,6 +104,5 @@ class HTTPConnection(object):
         self._conn.close()
         return False  # Never swallow exceptions.
 
-    # Can anyone say 'proxy object pattern'?
     def __getattr__(self, name):
         return getattr(self._conn, name)

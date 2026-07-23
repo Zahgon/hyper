@@ -1,12 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-hyper/http11/parser
-~~~~~~~~~~~~~~~~~~~
-
-This module contains hyper's pure-Python HTTP/1.1 parser. This module defines
-an abstraction layer for HTTP/1.1 parsing that allows for dropping in other
-modules if needed, in order to obtain speedups on your chosen platform.
-"""
 from collections import namedtuple
 
 
@@ -16,19 +8,10 @@ Response = namedtuple(
 
 
 class ParseError(Exception):
-    """
-    An invalid HTTP message was passed to the parser.
-    """
     pass
 
 
 class Parser(object):
-    """
-    A single HTTP parser object.
-    This object is not thread-safe, and it does maintain state that is shared
-    across parsing requests. For this reason, make sure that access to this
-    object is synchronized if you use it across multiple threads.
-    """
     def __init__(self):
         pass
 
@@ -40,9 +23,6 @@ class Parser(object):
         :returns: A :class:`Response <hyper.http11.parser.Response>` object, or
             ``None`` if there is not enough data in the buffer.
         """
-        # Begin by copying the data out of the buffer. This is necessary
-        # because as much as possible we want to use the built-in bytestring
-        # methods, rather than looping over the data in Python.
         temp_buffer = buffer.tobytes()
 
         index = temp_buffer.find(b'\n')
@@ -58,10 +38,8 @@ class Parser(object):
         status = int(status)
         reason = memoryview(reason.strip())
 
-        # Chomp the newline.
         index += 1
 
-        # Now, parse the headers out.
         end_index = index
         headers = []
 
@@ -70,7 +48,6 @@ class Parser(object):
             if end_index == -1:
                 return None
             elif (end_index - index) <= 1:
-                # Chomp the newline
                 end_index += 1
                 break
 

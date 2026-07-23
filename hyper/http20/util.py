@@ -1,10 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-hyper/http20/util
-~~~~~~~~~~~~~~~~~
-
-Utility functions for use with hyper.
-"""
 from collections import defaultdict
 
 

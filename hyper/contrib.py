@@ -1,10 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-hyper/contrib
-~~~~~~~~~~~~~
-
-Contains a few utilities for use with other HTTP libraries.
-"""
 try:
     from requests.adapters import HTTPAdapter
     from requests.models import Response
@@ -23,13 +17,7 @@ from hyper.common.util import to_native_string
 
 
 class HTTP20Adapter(HTTPAdapter):
-    """
-    A Requests Transport Adapter that uses hyper to send requests over
-    HTTP/2. This implements some degree of connection pooling to maximise the
-    HTTP/2 gain.
-    """
     def __init__(self, window_manager=None, *args, **kwargs):
-        #: A mapping between HTTP netlocs and ``HTTP20Connection`` objects.
         self.connections = {}
         self.window_manager = window_manager
 
@@ -62,9 +50,6 @@ class HTTP20Adapter(HTTPAdapter):
             proxy_headers = None
             proxy_netloc = None
 
-        # We put proxy headers in the connection_key, because
-        # ``proxy_headers`` method might be overridden, so we can't
-        # rely on proxy headers being the same for the same proxies.
         proxy_headers_key = (frozenset(proxy_headers.items())
                              if proxy_headers else None)
         connection_key = (host, port, scheme, cert, verify,
@@ -104,7 +89,6 @@ class HTTP20Adapter(HTTPAdapter):
             proxy=proxy,
             timeout=timeout)
 
-        # Build the selector.
         selector = parsed.path
         selector += '?' + parsed.query if parsed.query else ''
         selector += '#' + parsed.fragment if parsed.fragment else ''
@@ -151,27 +135,8 @@ class HTTP20Adapter(HTTPAdapter):
         response.request = request
         response.connection = self
 
-        # First horrible patch: Requests expects its raw responses to have a
-        # release_conn method, which I don't. We should monkeypatch a no-op on.
         resp.release_conn = lambda: None
 
-        # Next, add the things HTTPie needs. It needs the following things:
-        #
-        # - The `raw` object has a property called `_original_response` that is
-        #   a `httplib` response object.
-        # - `raw._original_response` has three simple properties: `version`,
-        #   `status`, `reason`.
-        # - `raw._original_response.version` has one of three values: `9`,
-        #   `10`, `11`.
-        # - `raw._original_response.msg` exists.
-        # - `raw._original_response.msg._headers` exists and is an iterable of
-        #   two-tuples.
-        #
-        # We fake this out. Most of this exists on our response object already,
-        # and the rest can be faked.
-        #
-        # All of this exists for httpie, which I don't have any tests for,
-        # so I'm not going to bother adding test coverage for it.
         class FakeOriginalResponse(object):  # pragma: no cover
             def __init__(self, headers):
                 self._headers = headers

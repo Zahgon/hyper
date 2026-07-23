@@ -1,18 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-hyper/http20/stream
-~~~~~~~~~~~~~~~~~~~
-
-Objects that make up the stream-level abstraction of hyper's HTTP/2 support.
-
-These objects are not expected to be part of the public HTTP/2 API: they're
-intended purely for use inside hyper's HTTP/2 abstraction.
-
-Conceptually, a single HTTP/2 connection is made up of many streams: each
-stream is an independent, bi-directional sequence of HTTP headers and data.
-Each stream is identified by a monotonically increasing integer, assigned to
-the stream by the endpoint that initiated the stream.
-"""
 import h2.exceptions
 
 from ..common.headers import HTTPHeaderMap
@@ -21,21 +7,10 @@ import logging
 
 log = logging.getLogger(__name__)
 
-# Define the largest chunk of data we'll send in one go. Realistically, we
-# should take the MSS into account but that's pretty dull, so let's just say
-# 1kB and call it a day.
 MAX_CHUNK = 1024
 
 
 class Stream(object):
-    """
-    A single HTTP/2 stream.
-
-    A stream is an independent, bi-directional sequence of HTTP headers and
-    data. Each stream is identified by a single integer. From a HTTP
-    perspective, a stream _approximately_ matches a single request-response
-    pair.
-    """
     def __init__(self,
                  stream_id,
                  window_manager,
@@ -46,36 +21,22 @@ class Stream(object):
         self.stream_id = stream_id
         self.headers = HTTPHeaderMap()
 
-        # Set to a key-value set of the response headers once their
-        # HEADERS..CONTINUATION frame sequence finishes.
         self.response_headers = None
 
-        # Set to a key-value set of the response trailers once their
-        # HEADERS..CONTINUATION frame sequence finishes.
         self.response_trailers = None
 
-        # A dict mapping the promised stream ID of a pushed resource to a
-        # key-value set of its request headers. Entries are added once their
-        # PUSH_PROMISE..CONTINUATION frame sequence finishes.
         self.promised_headers = {}
 
-        # Unconsumed response data chunks. Empties after every call to _read().
         self.data = []
 
-        # Whether the remote side has completed the stream.
         self.remote_closed = False
 
-        # Whether we have closed the stream.
         self.local_closed = False
 
-        # There are two flow control windows: one for data we're sending,
-        # one for data being sent to us.
         self._in_window_manager = window_manager
 
-        # Save off a reference to the state machine wrapped with lock.
         self._conn = connection
 
-        # Save off a data callback.
         self._send_outstanding_data = send_outstanding_data
         self._recv_cb = recv_cb
         self._close_cb = close_cb
@@ -107,7 +68,6 @@ class Stream(object):
         sent, the ``final`` flag _must_ be set to True. If no data is to be
         sent, set ``data`` to ``None``.
         """
-        # Define a utility iterator for file objects.
         def file_iterator(fobj):
             while True:
                 data = fobj.read(MAX_CHUNK)
@@ -115,15 +75,12 @@ class Stream(object):
                 if len(data) < MAX_CHUNK:
                     break
 
-        # Build the appropriate iterator for the data, in chunks of CHUNK_SIZE.
         if hasattr(data, 'read'):
             chunks = file_iterator(data)
         else:
             chunks = (data[i:i+MAX_CHUNK]
                       for i in range(0, len(data), MAX_CHUNK))
 
-        # since we need to know when we have a last package we need to know
-        # if there is another package in advance
         cur_chunk = None
         try:
             cur_chunk = next(chunks)
@@ -143,7 +100,6 @@ class Stream(object):
         def listlen(list):
             return sum(map(len, list))
 
-        # Keep reading until the stream is closed or we get enough data.
         while (not self.remote_closed and
                 (amt is None or listlen(self.data) < amt)):
             self._recv_cb(stream_id=self.stream_id)
@@ -156,7 +112,6 @@ class Stream(object):
         """
         Reads a single data frame from the stream and returns it.
         """
-        # Keep reading until the stream is closed or we have a data frame.
         while not self.remote_closed and not self.data:
             self._recv_cb(stream_id=self.stream_id)
 
@@ -169,9 +124,6 @@ class Stream(object):
         """
         Receive response headers.
         """
-        # TODO: If this is called while we're still sending data, we may want
-        # to stop sending that data and check the response. Early responses to
-        # big uploads are almost always a problem.
         self.response_headers = HTTPHeaderMap(event.headers)
 
     def receive_trailers(self, event):
@@ -193,7 +145,6 @@ class Stream(object):
         size = event.flow_controlled_length
         increment = self._in_window_manager._handle_frame(size)
 
-        # Append the data to the buffer.
         self.data.append(event.data)
 
         if increment:
@@ -203,9 +154,6 @@ class Stream(object):
                         increment, stream_id=self.stream_id
                     )
             except h2.exceptions.StreamClosedError:
-                # We haven't got to it yet, but the stream is already
-                # closed. We don't need to increment the window in this
-                # case!
                 pass
             else:
                 self._send_outstanding_data()
@@ -227,7 +175,6 @@ class Stream(object):
         """
         Provides the headers to the connection object.
         """
-        # Strip any headers invalid in H2.
         return h2_safe_headers(self.headers)
 
     def getheaders(self):
@@ -235,11 +182,9 @@ class Stream(object):
         Once all data has been sent on this connection, returns a key-value set
         of the headers of the response to the original request.
         """
-        # Keep reading until all headers are received.
         while self.response_headers is None:
             self._recv_cb(stream_id=self.stream_id)
 
-        # Find the Content-Length header if present.
         self._in_window_manager.document_size = (
             int(self.response_headers.get(b'content-length', [0])[0])
         )
@@ -247,44 +192,10 @@ class Stream(object):
         return self.response_headers
 
     def gettrailers(self):
-        """
-        Once all data has been sent on this connection, returns a key-value set
-        of the trailers of the response to the original request.
-
-        .. warning:: Note that this method requires that the stream is
-                     totally exhausted. This means that, if you have not
-                     completely read from the stream, all stream data will be
-                     read into memory.
-
-        :returns: The key-value set of the trailers, or ``None`` if no trailers
-                  were sent.
-        """
-        # Keep reading until the stream is done.
-        while not self.remote_closed:
-            self._recv_cb(stream_id=self.stream_id)
-
-        return self.response_trailers
+        pass
 
     def get_pushes(self, capture_all=False):
-        """
-        Returns a generator that yields push promises from the server. Note
-        that this method is not idempotent; promises returned in one call will
-        not be returned in subsequent calls. Iterating through generators
-        returned by multiple calls to this method simultaneously results in
-        undefined behavior.
-
-        :param capture_all: If ``False``, the generator will yield all buffered
-            push promises without blocking. If ``True``, the generator will
-            first yield all buffered push promises, then yield additional ones
-            as they arrive, and terminate when the original stream closes.
-        """
-        while True:
-            for pair in self.promised_headers.items():
-                yield pair
-            self.promised_headers = {}
-            if not capture_all or self.remote_closed:
-                break
-            self._recv_cb(stream_id=self.stream_id)
+        pass
 
     def close(self, error_code=None):
         """
@@ -294,14 +205,11 @@ class Stream(object):
         :param error_code: (optional) The error code to reset the stream with.
         :returns: Nothing.
         """
-        # FIXME: I think this is overbroad, but for now it's probably ok.
         if not (self.remote_closed and self.local_closed):
             try:
                 with self._conn as conn:
                     conn.reset_stream(self.stream_id, error_code or 0)
             except h2.exceptions.ProtocolError:
-                # If for any reason we can't reset the stream, just
-                # tolerate it.
                 pass
             else:
                 self._send_outstanding_data(tolerate_peer_gone=True)
@@ -312,12 +220,7 @@ class Stream(object):
 
     @property
     def _out_flow_control_window(self):
-        """
-        The size of our outbound flow control window.
-        """
-
-        with self._conn as conn:
-            return conn.local_flow_control_window(self.stream_id)
+        pass
 
     def _send_chunk(self, data, final):
         """
@@ -328,12 +231,9 @@ class Stream(object):
         (determined by being of size less than MAX_CHUNK) and no more data is
         to be sent.
         """
-        # If we don't fit in the connection window, try popping frames off the
-        # connection in hope that one might be a window update frame.
         while len(data) > self._out_flow_control_window:
             self._recv_cb()
 
-        # Send the frame and decrement the flow control window.
         with self._conn as conn:
             conn.send_data(
                 stream_id=self.stream_id, data=data, end_stream=final

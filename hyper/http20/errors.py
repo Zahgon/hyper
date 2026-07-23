@@ -1,16 +1,4 @@
 # -*- coding: utf-8 -*-
-# flake8: noqa
-"""
-hyper/http20/errors
-~~~~~~~~~~~~~~~~~~~
-
-Global error code registry containing the established HTTP/2 error codes.
-The registry is based on a 32-bit space so we use the error code to index into
-the array.
-
-The current registry is available at:
-https://tools.ietf.org/html/rfc7540#section-11.4
-"""
 
 NO_ERROR =            {'Name': 'NO_ERROR',
                        'Code': '0x0',
